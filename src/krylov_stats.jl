@@ -1,4 +1,4 @@
-export SimpleStats, LsmrStats, LanczosStats, LanczosShiftStats, SymmlqStats, AdjointStats, LNLQStats, LSLQStats
+export SimpleStats, LsmrStats, LanczosStats, LanczosShiftStats, SymmlqStats, AdjointStats, LNLQStats, LSLQStats, MinresQlpStats
 
 import Base.copyto!
 
@@ -386,6 +386,74 @@ function copyto!(dest :: LSLQStats, src :: LSLQStats)
   dest.error_with_bnd   = src.error_with_bnd
   dest.err_ubnds_lq     = copy(src.err_ubnds_lq)
   dest.err_ubnds_cg     = copy(src.err_ubnds_cg)
+  dest.allocation_timer = src.allocation_timer
+  dest.timer            = src.timer
+  dest.status           = src.status
+  return dest
+end
+
+"""
+Type for storing statistics returned by MINRES-QLP.
+The fields are as follows:
+- niter
+- solved
+- inconsistent
+- indefinite
+- npcCount
+- residuals
+- Aresiduals
+- Acond
+- residuals_nelq
+- Aresiduals_nelq
+- err_ubnds_nelq
+- err_ubnds_qlp
+- allocation_timer
+- timer
+- status
+"""
+mutable struct MinresQlpStats{T} <: KrylovStats{T}
+  niter            :: Int
+  solved           :: Bool
+  inconsistent     :: Bool
+  indefinite       :: Bool
+  npcCount         :: Int
+  residuals        :: Vector{T}
+  Aresiduals       :: Vector{T}
+  Acond            :: Vector{T}
+  residuals_nelq   :: Vector{T}
+  Aresiduals_nelq  :: Vector{T}
+  err_ubnds_nelq   :: Vector{T}
+  err_ubnds_qlp    :: Vector{T}
+  allocation_timer :: Float64
+  timer            :: Float64
+  status           :: String
+end
+
+function reset!(stats :: MinresQlpStats)
+  empty!(stats.residuals)
+  empty!(stats.Aresiduals)
+  empty!(stats.Acond)
+  empty!(stats.residuals_nelq)
+  empty!(stats.Aresiduals_nelq)
+  empty!(stats.err_ubnds_nelq)
+  empty!(stats.err_ubnds_qlp)
+  stats.indefinite = false
+  stats.npcCount = 0
+end
+
+function copyto!(dest :: MinresQlpStats, src :: MinresQlpStats)
+  dest.niter            = src.niter
+  dest.solved           = src.solved
+  dest.inconsistent     = src.inconsistent
+  dest.indefinite       = src.indefinite
+  dest.npcCount         = src.npcCount
+  dest.residuals        = copy(src.residuals)
+  dest.Aresiduals       = copy(src.Aresiduals)
+  dest.Acond            = copy(src.Acond)
+  dest.residuals_nelq   = copy(src.residuals_nelq)
+  dest.Aresiduals_nelq  = copy(src.Aresiduals_nelq)
+  dest.err_ubnds_nelq   = copy(src.err_ubnds_nelq)
+  dest.err_ubnds_qlp    = copy(src.err_ubnds_qlp)
   dest.allocation_timer = src.allocation_timer
   dest.timer            = src.timer
   dest.status           = src.status

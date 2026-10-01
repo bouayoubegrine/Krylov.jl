@@ -163,4 +163,70 @@
       @test solver.stats.solved == true
     end
   end
+
+  @testset "NELQ residuals and error bounds" begin
+    for FC in (Float64, ComplexF64)
+      # The NELQ iterate xᴺₖ is stored in workspace.x during the iterations.
+      function nelq_iterates(A, b; kwargs...)
+        xN = [zeros(FC, length(b))]
+        callback = workspace -> (push!(xN, copy(workspace.x)); false)
+        x, stats = minres_qlp(A, b; history=true, callback=callback, kwargs...)
+        return x, stats, xN
+      end
+
+      # Residual and A-residual norms of the NELQ iterates.
+      for (A, b) in (symmetric_definite(30, FC=FC), symmetric_indefinite(30, FC=FC))
+        x, stats, xN = nelq_iterates(A, b, nelq_residuals=true, atol=0.0, rtol=1e-12)
+        niter = stats.niter
+        @test length(stats.residuals_nelq) == niter + 1
+        @test length(stats.Aresiduals_nelq) ≥ niter
+        for k = 0 : niter
+          rN = b - A * xN[k+1]
+          @test abs(stats.residuals_nelq[k+1] - norm(rN)) ≤ 1e-8 * norm(b)
+        end
+        for k = 1 : niter
+          rN = b - A * xN[k]  # rᴺₖ₋₁
+          @test abs(stats.Aresiduals_nelq[k] - norm(A * rN)) ≤ 1e-8 * norm(A * b)
+        end
+      end
+
+      # Gauss-Radau upper bounds on the NELQ and MINRES-QLP errors.
+      A, b = symmetric_definite(30, FC=FC)
+      λest = (1 - 1e-4) * eigmin(Hermitian(Matrix(A)))
+      xstar = Matrix(A) \ b
+      x, stats, xN = nelq_iterates(A, b, λest=λest, etol=0.0, atol=0.0, rtol=1e-12)
+      @test length(stats.err_ubnds_nelq) == length(stats.err_ubnds_qlp) == stats.niter - 2
+      for k = 3 : stats.niter
+        xQ, _ = minres_qlp(A, b, itmax=k, atol=0.0, rtol=0.0)
+        errN = norm(xstar - xN[k+1])
+        errQ = norm(xstar - xQ)
+        @test stats.err_ubnds_nelq[k-2] ≥ (1 - 1e-6) * errN - 1e-12 * norm(xstar)
+        @test stats.err_ubnds_qlp[k-2] ≥ (1 - 1e-6) * errQ - 1e-12 * norm(xstar)
+        @test errQ ≤ errN + 1e-12 * norm(xstar)
+      end
+
+      # Stopping criterion based on the upper bound on the MINRES-QLP error.
+      x, stats = minres_qlp(A, b, λest=λest, etol=1e-6, atol=0.0, rtol=0.0)
+      @test stats.status == "forward error upper bound small enough"
+      @test stats.solved
+      @test norm(xstar - x) ≤ 1e-6 * norm(x)
+
+      # Test with smallest eigenvalue estimate (as in LSLQ).
+      # The Lanczos process terminates at ℓ = 4 and λest ≈ λₘᵢₙ(A) = λₘᵢₙ(T₄),
+      # so that T̃₄ ≈ T₄ and the NELQ bound is attained.
+      U, _ = qr(rand(FC, 4, 4))
+      A = Matrix(U) * diagm(0 => FC[1, 2, 3, 4]) * Matrix(U)'
+      A = (A + A') / 2
+      b = ones(FC, 4)
+      x_exact = A \ b
+      x, stats, xN = nelq_iterates(A, b, λest=1.0 - 1.0e-10)
+      @test stats.niter == 4
+      @test norm(x - x_exact) ≤ sqrt(eps(Float64)) * norm(x_exact)
+      @test isapprox(stats.err_ubnds_nelq[end], norm(x_exact - xN[end]), rtol=1.0e-6)
+      # ‖x⋆ - x₄‖ = 0 and the MINRES-QLP bound is O(√(λₘᵢₙ - λest)).
+      @test stats.err_ubnds_qlp[end] ≤ 1.0e-4 * norm(x_exact)
+
+      @test_throws ErrorException minres_qlp(A, b, λest=-1.0)
+    end
+  end
 end

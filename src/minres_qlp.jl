@@ -15,6 +15,11 @@
 # Liu, Yang, and Roosta, MINRES: from negative curvature detection to monotonicity properties,
 # SIAM Journal on Optimization, 32(4), pp. 2636--2661, 2022.
 #
+# The residual and A-residual estimates of the NELQ iterate, as well as the
+# Gauss-Radau upper bounds on the NELQ and MINRES-QLP errors, follow
+# O. Mouhtal and D. Orban, NELQ: a minimum error iterative solver for symmetric
+# linear systems with MINRES error control, Cahier du GERAD, 2026.
+#
 # Alexis Montoison, <alexis.montoison@polymtl.ca>
 # Montreal, September 2019.
 
@@ -24,7 +29,8 @@ export minres_qlp, minres_qlp!
     (x, stats) = minres_qlp(A, b::AbstractVector{FC};
                             M=I, ldiv::Bool=false, Artol::T=√eps(T),
                             linesearch::Bool=false, λ::T=zero(T), atol::T=√eps(T),
-                            rtol::T=√eps(T), itmax::Int=0,
+                            rtol::T=√eps(T), nelq_residuals::Bool=false,
+                            λest::T=zero(T), etol::T=√eps(T), itmax::Int=0,
                             timemax::Float64=Inf, verbose::Int=0, history::Bool=false,
                             callback=workspace->false, iostream::IO=kstdout)
 
@@ -64,6 +70,9 @@ For an in-place variant that reuses memory across solves, see [`minres_qlp!`](@r
 * `atol`: absolute stopping tolerance based on the residual norm;
 * `rtol`: relative stopping tolerance based on the residual norm;
 * `Artol`: relative stopping tolerance based on the Aᴴ-residual norm;
+* `nelq_residuals`: if `true`, compute the residual norm and the A-residual norm of the NELQ iterate;
+* `λest`: positive strict lower bound on the smallest nonzero eigenvalue of A. If `λest > 0`, Gauss-Radau upper bounds on the NELQ and MINRES-QLP errors are computed. They are only valid when A is positive semidefinite, the system is consistent, and 0 < λest < λᵣ, where λᵣ is the smallest nonzero eigenvalue of A;
+* `etol`: stopping tolerance based on the upper bound on the MINRES-QLP error;
 * `linesearch`: if `true`, indicate that the solution is to be used in an inexact Newton method with linesearch. If `true` and nonpositive curvature is detected, the behavior depends on the iteration:
  – at iteration k = 1, the solver takes the right-hand side (i.e., the preconditioned negative gradient) as the current solution. The same search direction is returned in `workspace.npc_dir`, and `stats.npcCount` is set to 1;
  – at iteration k > 1, the solver returns the solution from iteration k – 1, the residual from iteration k is a nonpositive curvature direction stored in `stats.npc_dir` and `stats.npcCount` is set to 1;
@@ -77,7 +86,19 @@ For an in-place variant that reuses memory across solves, see [`minres_qlp!`](@r
 #### Output arguments
 
 * `x`: a dense vector of length `n`;
-* `stats`: statistics collected on the run in a [`SimpleStats`](@ref) structure.
+* `stats`: statistics collected on the run in a [`MinresQlpStats`](@ref) structure.
+
+#### Stats
+
+If `history = true`:
+
+* `stats.residuals` and `stats.Aresiduals` contain the residual and A-residual norms of the MINRES-QLP iterates;
+* `stats.residuals_nelq` contains the residual norms of the NELQ iterates (only if `nelq_residuals = true`);
+* `stats.Aresiduals_nelq` contains the A-residual norms of the NELQ iterates (only if `nelq_residuals = true`);
+* `stats.err_ubnds_nelq` contains upper bounds on the NELQ error for k ≥ 3 (only if `λest > 0`);
+* `stats.err_ubnds_qlp` contains upper bounds on the MINRES-QLP error for k ≥ 3 (only if `λest > 0`);
+
+When a preconditioner `M` is used, the errors are measured in the M⁻¹-norm.
 
 #### References
 
@@ -85,6 +106,7 @@ For an in-place variant that reuses memory across solves, see [`minres_qlp!`](@r
 * S.-C. T. Choi, C. C. Paige and M. A. Saunders, [*MINRES-QLP: A Krylov subspace method for indefinite or singular symmetric systems*](https://doi.org/10.1137/100787921), SIAM Journal on Scientific Computing, Vol. 33(4), pp. 1810--1836, 2011.
 * S.-C. T. Choi and M. A. Saunders, [*Algorithm 937: MINRES-QLP for symmetric and Hermitian linear equations and least-squares problems*](https://doi.org/10.1145/2527267), ACM Transactions on Mathematical Software, 40(2), pp. 1--12, 2014.
 * Y. Liu and F. Roosta, [*MINRES: From Negative Curvature Detection to Monotonicity Properties*](https://doi.org/10.1137/21M143666X), SIAM Journal on Optimization, 32(4), pp. 2636--2661, 2022.
+* O. Mouhtal and D. Orban, *NELQ: A minimum error iterative solver for symmetric linear systems with MINRES error control*, Cahier du GERAD, 2026.
 
 """
 function minres_qlp end
@@ -114,6 +136,9 @@ def_kwargs_minres_qlp = (:(; M = I                        ),
                          :(; atol::T = √eps(T)            ),
                          :(; rtol::T = √eps(T)            ),
                          :(; Artol::T = √eps(T)           ),
+                         :(; nelq_residuals::Bool = false ),
+                         :(; λest::T = zero(T)            ),
+                         :(; etol::T = √eps(T)            ),
                          :(; itmax::Int = 0               ),
                          :(; timemax::Float64 = Inf       ),
                          :(; verbose::Int = 0             ),
@@ -125,7 +150,7 @@ def_kwargs_minres_qlp = extract_parameters.(def_kwargs_minres_qlp)
 
 args_minres_qlp = (:A, :b)
 optargs_minres_qlp = (:x0,)
-kwargs_minres_qlp = (:M, :ldiv, :linesearch, :λ, :atol, :rtol, :Artol, :itmax, :timemax, :verbose, :history, :callback, :iostream)
+kwargs_minres_qlp = (:M, :ldiv, :linesearch, :λ, :atol, :rtol, :Artol, :nelq_residuals, :λest, :etol, :itmax, :timemax, :verbose, :history, :callback, :iostream)
 
 @eval begin
   function minres_qlp!(workspace :: MinresQlpWorkspace{T,FC,S}, $(def_args_minres_qlp...); $(def_kwargs_minres_qlp...)) where {T <: AbstractFloat, FC <: FloatOrComplex{T}, S <: AbstractVector{FC}}
@@ -140,6 +165,7 @@ kwargs_minres_qlp = (:M, :ldiv, :linesearch, :λ, :atol, :rtol, :Artol, :itmax, 
     length(b) == m || error("Inconsistent problem size")
     (verbose > 0) && @printf(iostream, "MINRES-QLP: system of size %d\n", n)
     (workspace.warm_start && linesearch) && error("warm_start and linesearch cannot be used together")
+    λest ≥ 0 || error("λest must be nonnegative")
 
     # Tests M = Iₙ
     MisI = (M === I)
@@ -158,6 +184,8 @@ kwargs_minres_qlp = (:M, :ldiv, :linesearch, :λ, :atol, :rtol, :Artol, :itmax, 
     Δx, x, p, stats = workspace.Δx, workspace.x, workspace.p, workspace.stats
     warm_start = workspace.warm_start
     rNorms, ArNorms, Aconds = stats.residuals, stats.Aresiduals, stats.Acond
+    rNorms_nelq, ArNorms_nelq = stats.residuals_nelq, stats.Aresiduals_nelq
+    err_ubnds_nelq, err_ubnds_qlp = stats.err_ubnds_nelq, stats.err_ubnds_qlp
     reset!(stats)
     vₖ = MisI ? M⁻¹vₖ : workspace.vₖ
     vₖ₊₁ = MisI ? p : M⁻¹vₖ₋₁
@@ -190,6 +218,7 @@ kwargs_minres_qlp = (:M, :ldiv, :linesearch, :λ, :atol, :rtol, :Artol, :itmax, 
     Acond = zero(T)
     history && push!(rNorms, rNorm)
     history && push!(Aconds, Acond)
+    (history && nelq_residuals) && push!(rNorms_nelq, rNorm)  # ‖rᴺ₀‖ = β₁
     if rNorm == 0
       stats.niter = 0
       stats.solved, stats.inconsistent = true, false
@@ -205,8 +234,13 @@ kwargs_minres_qlp = (:M, :ldiv, :linesearch, :λ, :atol, :rtol, :Artol, :itmax, 
 
     ε = atol + rtol * rNorm
     κ = zero(T)
-    (verbose > 0) && @printf(iostream, "%5s  %7s  %7s  %7s  %7s  %8s  %7s  %7s  %8s  %5s\n", "k", "‖rₖ‖", "‖Arₖ₋₁‖", "βₖ₊₁", "Rₖ.ₖ", "Lₖ.ₖ", "‖A‖", "κ(A)", "backward", "timer")
-    kdisplay(iter, verbose) && @printf(iostream, "%5d  %7.1e  %7s  %7.1e  %7s  %8s  %7.1e  %7.1e  %8s  %.2fs\n", iter, rNorm, "✗ ✗ ✗ ✗", βₖ, "✗ ✗ ✗ ✗", " ✗ ✗ ✗ ✗", ANorm, Acond, " ✗ ✗ ✗ ✗", start_time |> ktimer)
+    if nelq_residuals
+      (verbose > 0) && @printf(iostream, "%5s  %7s  %7s  %7s  %9s  %7s  %7s  %8s  %7s  %7s  %8s  %5s\n", "k", "‖rₖ‖", "‖Arₖ₋₁‖", "‖rᴺₖ‖", "‖Arᴺₖ₋₁‖", "βₖ₊₁", "Rₖ.ₖ", "Lₖ.ₖ", "‖A‖", "κ(A)", "backward", "timer")
+      kdisplay(iter, verbose) && @printf(iostream, "%5d  %7.1e  %7s  %7.1e  %9s  %7.1e  %7s  %8s  %7.1e  %7.1e  %8s  %.2fs\n", iter, rNorm, "✗ ✗ ✗ ✗", rNorm, "✗ ✗ ✗ ✗", βₖ, "✗ ✗ ✗ ✗", " ✗ ✗ ✗ ✗", ANorm, Acond, " ✗ ✗ ✗ ✗", start_time |> ktimer)
+    else
+      (verbose > 0) && @printf(iostream, "%5s  %7s  %7s  %7s  %7s  %8s  %7s  %7s  %8s  %5s\n", "k", "‖rₖ‖", "‖Arₖ₋₁‖", "βₖ₊₁", "Rₖ.ₖ", "Lₖ.ₖ", "‖A‖", "κ(A)", "backward", "timer")
+      kdisplay(iter, verbose) && @printf(iostream, "%5d  %7.1e  %7s  %7.1e  %7s  %8s  %7.1e  %7.1e  %8s  %.2fs\n", iter, rNorm, "✗ ✗ ✗ ✗", βₖ, "✗ ✗ ✗ ✗", " ✗ ✗ ✗ ✗", ANorm, Acond, " ✗ ✗ ✗ ✗", start_time |> ktimer)
+    end
 
     # Set up workspace.
     kfill!(M⁻¹vₖ₋₁, zero(FC))
@@ -219,6 +253,33 @@ kwargs_minres_qlp = (:M, :ldiv, :linesearch, :λ, :atol, :rtol, :Artol, :itmax, 
     kfill!(wₖ, zero(FC))
     cₖ₋₂ = cₖ₋₁ = cₖ = one(T)   # Givens cosines used for the QR factorization of Tₖ₊₁.ₖ
     sₖ₋₂ = sₖ₋₁ = sₖ = zero(T)  # Givens sines used for the QR factorization of Tₖ₊₁.ₖ
+
+    # NELQ iterate xᴺₖ = Vₖyᴺₖ.
+    # In the loop, x contains xᴺₖ and the MINRES-QLP iterate is xₖ = xᴺₖ + τₖ₋₁wₖ₋₁ + τₖwₖ.
+    rNorm_nelq = rNorm           # ‖rᴺₖ‖
+    ArNorm_nelq = zero(T)        # ‖Arᴺₖ₋₁‖
+    AbNorm = zero(T)             # ‖Ab‖ = ‖Arᴺₖ‖ for k ≤ 2 because xᴺ₀ = xᴺ₁ = xᴺ₂ = 0
+    χoldₖ₋₂ = χoldₖ₋₁ = zero(T)  # last two components of tₖ₋₁ - Rₖ₋₁yᴺₖ₋₁
+    νoldₖ₋₂ = νoldₖ₋₁ = zero(T)  # last two components of yᴺₖ₋₁
+    κₖ₋₁ = zero(T)               # coefficient of vₖ₋₁ in ẘₖ₋₂
+    λₖ₋₂ = λₖ₋₁ = zero(T)        # diagonal entries of Rₖ₋₁
+    γₖ₋₂ = zero(T)               # superdiagonal entry of Rₖ₋₁
+    αₖ₋₁ = βₖ₋₁ = zero(T)        # Lanczos coefficients of the previous iteration
+    χₖ₋₁ = χₖ = zero(T)          # last two components of tₖ - Rₖyᴺₖ
+    νₖ₋₁ = νₖ = zero(T)          # last two components of yᴺₖ
+    κₖ = zero(T)                 # coefficient of vₖ in ẘₖ₋₁
+    xNorm²_nelq = zero(T)        # ‖xᴺₖ‖²
+
+    # Gauss-Radau upper bounds on the NELQ and MINRES-QLP errors.
+    error_bnd = λest > 0
+    # QR factorization of Tₖ - λest I = Q̃ₖR̃ₖ with symmetric Givens reflections, as in SYMMLQ.
+    ρbarʷ = zero(T)          # last diagonal entry of R̃ₖ before the next reflection
+    σbarʷ = zero(T)          # entry (k, k+1) of the partially reduced Tₖ₊₁ - λest I
+    cʷₖ₋₁ = sʷₖ₋₁ = zero(T)  # last reflection
+    cʷₖ₋₂ = -one(T)          # previous reflection (c₀ = -1 by convention)
+    ωₖ = zero(T)             # ωₖ is such that λₘᵢₙ(T̃ₖ) = λest where T̃ₖ is Tₖ with αₖ replaced by ωₖ
+    err_ubnd_qlp = zero(T)
+    fwd_err_ubnd = false
 
     # Tolerance for breakdown detection.
     btol = eps(T)^(3/4)
@@ -267,6 +328,47 @@ kwargs_minres_qlp = (:M, :ldiv, :linesearch, :λ, :atol, :rtol, :Artol, :itmax, 
       end
 
       ANorm² = ANorm² + αₖ * αₖ + βₖ * βₖ + βₖ₊₁ * βₖ₊₁
+
+      # Update ‖Arᴺₖ₋₁‖ estimate.
+      # It requires αₖ and βₖ₊₁, hence the delay of one iteration.
+      if nelq_residuals
+        if iter == 1
+          # ‖Ab‖ = β₁‖T₂.₁e₁‖
+          AbNorm = βₖ * sqrt(αₖ * αₖ + βₖ₊₁ * βₖ₊₁)
+        end
+        if iter ≤ 2
+          ArNorm_nelq = AbNorm
+        else
+          # ‖Arᴺₖ₋₁‖² = (λₖ₋₂χₖ₋₂)² + (γₖ₋₂χₖ₋₂ + λₖ₋₁χₖ₋₁)² + βₖ²(θᴺₖ₋₁² + (βₖ₊₁νₖ₋₁)²)
+          # with θᴺₖ₋₁ = βₖ₋₁νₖ₋₂ + (αₖ₋₁ + αₖ)νₖ₋₁, where νₖ₋₂ and νₖ₋₁ are the last two components of yᴺₖ₋₁.
+          θᴺₖ₋₁ = βₖ₋₁ * νoldₖ₋₂ + (αₖ₋₁ + αₖ) * νoldₖ₋₁
+          ArNorm_nelq = sqrt(abs2(λₖ₋₂ * χoldₖ₋₂) + abs2(γₖ₋₂ * χoldₖ₋₂ + λₖ₋₁ * χoldₖ₋₁) +
+                             βₖ * βₖ * (θᴺₖ₋₁ * θᴺₖ₋₁ + abs2(βₖ₊₁ * νoldₖ₋₁)))
+        end
+        history && push!(ArNorms_nelq, ArNorm_nelq)
+      end
+
+      # Gauss-Radau parameter ωₖ = λest + βₖ² (eₖ₋₁)ᵀ(Tₖ₋₁ - λest I)⁻¹eₖ₋₁ = λest - βₖ² cʷₖ₋₂ / ρbarʷₖ₋₁,
+      # computed from the QR factorization of Tₖ - λest I.
+      if error_bnd
+        if iter == 1
+          # [cʷ₁  sʷ₁] [α₁ - λest] = [ρʷ₁]
+          # [sʷ₁ -cʷ₁] [   β₂    ]   [ 0 ]
+          ρbarʷ = αₖ - λest
+          σbarʷ = βₖ₊₁
+        else
+          ωₖ = λest - βₖ * βₖ * cʷₖ₋₂ / ρbarʷ
+          # Apply the reflection Q̃ₖ₋₁.ₖ to the last column of Tₖ₊₁ - λest I
+          ρbarʷ = sʷₖ₋₁ * σbarʷ - cʷₖ₋₁ * (αₖ - λest)
+          σbarʷ = -cʷₖ₋₁ * βₖ₊₁
+          cʷₖ₋₂ = cʷₖ₋₁
+        end
+        ρʷ = sqrt(ρbarʷ * ρbarʷ + βₖ₊₁ * βₖ₊₁)
+        if ρʷ > 0
+          cʷₖ₋₁ = ρbarʷ / ρʷ
+          sʷₖ₋₁ = βₖ₊₁ / ρʷ
+        end
+      end
 
       # Update the QR factorization of Tₖ₊₁.ₖ = Qₖ [ Rₖ ].
       #                                            [ Oᵀ ]
@@ -465,6 +567,69 @@ kwargs_minres_qlp = (:M, :ldiv, :linesearch, :λ, :atol, :rtol, :Artol, :itmax, 
       end
       Acond = μmax / μmin
       history && push!(Aconds, Acond)
+
+      # Update ‖xᴺₖ‖², xᴺₖ = xᴺₖ₋₁ + τₖ₋₂wₖ₋₂
+      (iter ≥ 3) && (xNorm²_nelq += τₖ₋₂ * τₖ₋₂)
+
+      # Update ‖rᴺₖ‖ estimate and the quantities needed by ‖Arᴺₖ‖ at the next iteration.
+      if nelq_residuals
+        # ‖rᴺₖ‖² = χₖ₋₁² + χₖ² + ζbarₖ₊₁²
+        if iter == 1
+          # xᴺ₁ = 0 and ‖rᴺ₁‖ = β₁
+          χₖ₋₁ = zero(T)
+          χₖ = zero(T)
+        else
+          χₖ₋₁ = μbisₖ₋₁ * τₖ₋₁  # τₖ₋₁ - ρₖ₋₃τₖ₋₃ - ψₖ₋₂τₖ₋₂
+          χₖ = ξₖ                # τₖ - ρₖ₋₂τₖ₋₂
+          rNorm_nelq = sqrt(χₖ₋₁ * χₖ₋₁ + χₖ * χₖ + ζbarₖ₊₁ * ζbarₖ₊₁)
+        end
+        history && push!(rNorms_nelq, rNorm_nelq)
+
+        # Last two components νₖ₋₁ and νₖ of yᴺₖ, i.e., the coefficients of vₖ₋₁ and vₖ in xᴺₖ,
+        # and coefficient κₖ of vₖ in ẘₖ₋₁.
+        if iter == 1
+          νₖ₋₁ = νₖ = κₖ = zero(T)
+        elseif iter == 2
+          νₖ₋₁ = νₖ = zero(T)
+          κₖ = spₖ
+        else
+          νₖ₋₁ = νoldₖ₋₁ + cpₖ * κₖ₋₁ * τₖ₋₂
+          νₖ = spₖ * τₖ₋₂
+          κₖ = -sdₖ * cpₖ
+        end
+      end
+
+      # Gauss-Radau upper bounds on the NELQ and MINRES-QLP errors.
+      # The QLP factorization of T̃ₖ only differs from the one of Tₖ in its last two rows.
+      if error_bnd && iter ≥ 3
+        # [cₖ₋₁  sₖ₋₁] [γbarₖ₋₁] = [γ̃ₖ₋₁]
+        # [sₖ₋₁ -cₖ₋₁] [   ωₖ  ]   [ λ̃ₖ ]
+        γ̃ₖ₋₁ = cₖ₋₁ * γbarₖ₋₁ + sₖ₋₁ * ωₖ
+        λ̃ₖ   = sₖ₋₁ * γbarₖ₋₁ - cₖ₋₁ * ωₖ
+        # Apply the reflection Pₖ₋₂.ₖ
+        ψ̃ₖ₋₂ = cpₖ * ψbarₖ₋₂ + spₖ * γ̃ₖ₋₁
+        θ̃ₖ   = spₖ * ψbarₖ₋₂ - cpₖ * γ̃ₖ₋₁
+        ρ̃ₖ₋₂ =  spₖ * λ̃ₖ
+        η̃ₖ   = -cpₖ * λ̃ₖ
+        # Compute and apply the reflection P̃ₖ₋₁.ₖ
+        (c̃dₖ, s̃dₖ, μ̃ₖ₋₁) = sym_givens(μbarₖ₋₁, θ̃ₖ)
+        ψ̃ₖ₋₁ =  s̃dₖ * η̃ₖ
+        μ̃ₖ   = -c̃dₖ * η̃ₖ
+        # Solve L̃ₖz̃ₖ = t̃ₖ where t̃ₖ = (ζ₁, …, ζₖ₋₁, ζbarₖ).
+        # Only the last two components of z̃ₖ differ from the ones of the NELQ iterate.
+        τ̃ₖ₋₁ = (ξₖ₋₁ - ψ̃ₖ₋₂ * τₖ₋₂) / μ̃ₖ₋₁
+        τ̃ₖ   = (ζbarₖ - ρ̃ₖ₋₂ * τₖ₋₂ - ψ̃ₖ₋₁ * τ̃ₖ₋₁) / μ̃ₖ
+        # ‖x⋆ - xᴺₖ‖² ≤ τ̃ₖ₋₁² + τ̃ₖ²
+        err_nelq² = τ̃ₖ₋₁ * τ̃ₖ₋₁ + τ̃ₖ * τ̃ₖ
+        # ‖x⋆ - xₖ‖² ≤ τ̃ₖ₋₁² + τ̃ₖ² - τₖ₋₁² - τₖ²
+        err_qlp² = err_nelq² - τₖ₋₁ * τₖ₋₁ - τₖ * τₖ
+        err_ubnd_qlp = sqrt(abs(err_qlp²))
+        history && push!(err_ubnds_nelq, sqrt(err_nelq²))
+        history && push!(err_ubnds_qlp, err_ubnd_qlp)
+        # ‖xₖ‖² = ‖xᴺₖ‖² + τₖ₋₁² + τₖ²
+        xNorm_qlp = sqrt(xNorm²_nelq + τₖ₋₁ * τₖ₋₁ + τₖ * τₖ)
+        fwd_err_ubnd = err_ubnd_qlp ≤ etol * xNorm_qlp
+      end
       xNorm = knorm(n, x)
       backward = rNorm / (ANorm * xNorm)
 
@@ -483,7 +648,7 @@ kwargs_minres_qlp = (:M, :ldiv, :linesearch, :λ, :atol, :rtol, :Artol, :itmax, 
       user_requested_exit = callback(workspace) :: Bool
       zero_resid = zero_resid_mach | zero_resid_lim
       resid_decrease = resid_decrease_lim
-      solved = resid_decrease | zero_resid
+      solved = resid_decrease | zero_resid | fwd_err_ubnd
       inconsistent = (ArNorm ≤ κ && abs(μbarₖ) ≤ Artol) || (breakdown && !solved)
       timer = time_ns() - start_time
       overtimed = timer > timemax_ns
@@ -496,12 +661,30 @@ kwargs_minres_qlp = (:M, :ldiv, :linesearch, :λ, :atol, :rtol, :Artol, :itmax, 
         μbisₖ₋₂ = μbisₖ₋₁
         ψbarₖ₋₂ = ψbarₖ₋₁
       end
+      if nelq_residuals
+        if iter ≥ 2
+          χoldₖ₋₂ = χₖ₋₁
+          χoldₖ₋₁ = χₖ
+          γₖ₋₂ = γₖ₋₁
+        end
+        νoldₖ₋₂ = νₖ₋₁
+        νoldₖ₋₁ = νₖ
+        κₖ₋₁ = κₖ
+        λₖ₋₂ = λₖ₋₁
+        λₖ₋₁ = λₖ
+        αₖ₋₁ = αₖ
+        βₖ₋₁ = βₖ
+      end
       sₖ₋₁ = sₖ
       cₖ₋₁ = cₖ
       μbarₖ₋₁ = μbarₖ
       ζbarₖ = ζbarₖ₊₁
       βₖ = βₖ₊₁
-      kdisplay(iter, verbose) && @printf(iostream, "%5d  %7.1e  %7.1e  %7.1e  %7.1e  %8.1e  %7.1e  %7.1e  %8.1e  %.2fs\n", iter, rNorm, ArNorm, βₖ₊₁, λₖ, μbarₖ, ANorm, Acond, backward, start_time |> ktimer)
+      if nelq_residuals
+        kdisplay(iter, verbose) && @printf(iostream, "%5d  %7.1e  %7.1e  %7.1e  %9.1e  %7.1e  %7.1e  %8.1e  %7.1e  %7.1e  %8.1e  %.2fs\n", iter, rNorm, ArNorm, rNorm_nelq, ArNorm_nelq, βₖ₊₁, λₖ, μbarₖ, ANorm, Acond, backward, start_time |> ktimer)
+      else
+        kdisplay(iter, verbose) && @printf(iostream, "%5d  %7.1e  %7.1e  %7.1e  %7.1e  %8.1e  %7.1e  %7.1e  %8.1e  %.2fs\n", iter, rNorm, ArNorm, βₖ₊₁, λₖ, μbarₖ, ANorm, Acond, backward, start_time |> ktimer)
+      end
     end
     (verbose > 0) && @printf(iostream, "\n")
 
@@ -519,6 +702,7 @@ kwargs_minres_qlp = (:M, :ldiv, :linesearch, :λ, :atol, :rtol, :Artol, :itmax, 
     inconsistent        && (status = "found approximate minimum least-squares solution")
     zero_resid          && (status = "found approximate zero-residual solution")
     solved              && (status = "solution good enough given atol and rtol")
+    fwd_err_ubnd        && (status = "forward error upper bound small enough")
     user_requested_exit && (status = "user-requested exit")
     overtimed           && (status = "time limit exceeded")
 

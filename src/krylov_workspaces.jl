@@ -723,7 +723,7 @@ mutable struct MinresQlpWorkspace{T,FC,S} <: _KrylovWorkspace{T,FC,S,S}
   p          :: S
   vₖ         :: S
   warm_start :: Bool
-  stats      :: SimpleStats{T}
+  stats      :: MinresQlpStats{T}
 end
 
 function MinresQlpWorkspace(kc::KrylovConstructor{S,S}) where S
@@ -741,7 +741,7 @@ function MinresQlpWorkspace(kc::KrylovConstructor{S,S}) where S
   x       = similar(kc.vn)
   p       = similar(kc.vn)
   vₖ      = similar(kc.vn_empty)
-  stats = SimpleStats(0, false, false, false, 0, T[], T[], T[], T[], 0.0, 0.0, "unknown")
+  stats = MinresQlpStats(0, false, false, false, 0, T[], T[], T[], T[], T[], T[], T[], 0.0, 0.0, "unknown")
   workspace = MinresQlpWorkspace{T,FC,S}(m, n, Δx, wₖ₋₁, wₖ, M⁻¹vₖ₋₁, M⁻¹vₖ, npc_dir, x, p, vₖ, false, stats)
   workspace.stats.allocation_timer = start_allocation_time |> ktimer
   return workspace
@@ -761,7 +761,7 @@ function MinresQlpWorkspace(m::Integer, n::Integer, S::Type)
   vₖ      = S(undef, 0)
   npc_dir  = S(undef, 0)
   S = isconcretetype(S) ? S : typeof(x)
-  stats = SimpleStats(0, false, false, false, 0, T[], T[], T[], T[], 0.0, 0.0, "unknown")
+  stats = MinresQlpStats(0, false, false, false, 0, T[], T[], T[], T[], T[], T[], T[], 0.0, 0.0, "unknown")
   workspace = MinresQlpWorkspace{T,FC,S}(m, n, Δx, wₖ₋₁, wₖ, M⁻¹vₖ₋₁, M⁻¹vₖ, npc_dir, x, p, vₖ, false, stats)
   workspace.stats.allocation_timer = start_allocation_time |> ktimer
   return workspace

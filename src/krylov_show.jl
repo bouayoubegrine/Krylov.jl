@@ -30,6 +30,10 @@ special_fields = Dict(
   :Acond => "κ₂(A)",
   :err_ubnds_lq => "error bound LQ",
   :err_ubnds_cg => "error bound CG",
+  :residuals_nelq => "residuals (nelq)",
+  :Aresiduals_nelq => "Aresiduals (nelq)",
+  :err_ubnds_nelq => "error bound NELQ",
+  :err_ubnds_qlp => "error bound MINRES-QLP",
 )
 
 function show(io :: IO, stats :: KrylovStats)
